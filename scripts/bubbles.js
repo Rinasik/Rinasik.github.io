@@ -7,9 +7,12 @@
     constructor() {
       this.ctx = new (window.AudioContext || window.webkitAudioContext)();
       this.lastTime = 0;
+      this.enabled = false;
     }
 
     play(volume = 0.2) {
+      if (!this.enabled) return;
+
       const now = this.ctx.currentTime;
       const osc = this.ctx.createOscillator();
       const gain = this.ctx.createGain();
@@ -202,6 +205,12 @@
         border-radius:6px; color:#fff; font-family:sans-serif; z-index:1000;
       `;
       uiDiv.innerHTML = `
+        <div style="margin-bottom:8px">
+          <label>
+            <input type="checkbox" id="soundToggle">
+            Sound
+          </label>
+        </div>
         <label for="distanceExponent">Distance exponent: <span id="exp-value">1</span></label>
         <input type="range" id="distanceExponent" min="0.7" max="1.5" step="0.05" value="1" style="width:150px">
       `;
@@ -213,6 +222,12 @@
       slider.addEventListener("input", (e) => {
         this.physics.distanceExp = parseFloat(e.target.value);
         label.textContent = this.physics.distanceExp.toFixed(2);
+      });
+
+      const soundToggle = document.getElementById("soundToggle");
+
+      soundToggle.addEventListener("change", (e) => {
+        audioManager.enabled = e.target.checked;
       });
     }
 
