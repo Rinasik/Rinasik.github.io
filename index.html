@@ -17,20 +17,48 @@
         <option value="scripts/black-hole.js">Black-hole</option>
         <option value="scripts/differential-equation.js">Visualization of one differential equation</option>
       </select>
-  </div>
+    </div>
+    <button id="back" style="display:none;">← Back to menu</button>
 
     <script>
       const select = document.getElementById('game');
       const root = document.getElementById('root');
-      
+      const backBtn = document.getElementById('back');
+
+      const initialBodyStyle = document.body.getAttribute("style") || "";
+      const initialHtmlStyle = document.documentElement.getAttribute("style") || "";
+      const rootStyle = root.getAttribute("style") || "";
+
       select.addEventListener('change',(e)=> {
-        document.body.removeChild(root);
+        root.style.display = 'none';
 
         const script = document.createElement('script');
-
+        script.id = 'game-script';
         script.src = select.value;
-        document.body.appendChild(script)
+        document.body.appendChild(script);
+
+        backBtn.style.display = 'block';
       })
+
+      backBtn.addEventListener('click', () => {
+        const script = document.getElementById('game-script');
+        // удаляем игровой скрипт
+        if (script) {
+          document.body.removeChild(script);
+
+          if (window.cleanup) 
+            window.cleanup();
+        }
+
+        // возвращаем меню
+        select.value = "-1";
+        backBtn.style.display = 'none';
+
+        document.body.setAttribute("style", initialBodyStyle);
+        document.documentElement.setAttribute("style", initialHtmlStyle);
+        root.setAttribute("style", rootStyle);
+    });
+
     </script>
 
 

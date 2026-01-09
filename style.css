@@ -25,3 +25,43 @@ html {
   font-weight: 500;
   font-size: 24px;
 }
+
+#back {
+  position: fixed;
+  top: 16px;
+  left: 16px;
+
+  padding: 8px 14px;
+
+  font-size: 14px;
+  font-weight: 500;
+
+  color: #fff;
+  background: rgba(0, 0, 0, 0.7);
+
+  border: none;
+  border-radius: 6px;
+
+  cursor: pointer;
+
+  transition: 
+    background 0.2s ease,
+    transform 0.15s ease,
+    opacity 0.2s ease;
+
+  z-index: 1000;
+}
+
+#back:hover {
+  background: rgba(0, 0, 0, 0.85);
+  transform: translateY(-1px);
+}
+
+#back:active {
+  transform: translateY(0);
+  opacity: 0.9;
+}
+
+#back:focus {
+  outline: none;
+}
