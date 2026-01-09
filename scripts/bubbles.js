@@ -1,5 +1,6 @@
 (() => {
   let animationId = null;
+  const uiDiv = document.createElement("div");
 
   class Metrica {
     constructor({ height, width }) {
@@ -118,6 +119,7 @@
   const sphereRad = 250;
   const smallSphere = 10;
   const smooth = 0.85;
+  let distanceExponent = 1;
 
   let metrica = new Metrica(document.body.getBoundingClientRect());
   const mouseDot = new MouseDot();
@@ -142,15 +144,20 @@
         const dist = Math.sqrt(delta.x * delta.x + delta.y * delta.y) || 1;
 
         let force =
-          ((dist - sphereRad) / dist) * calcDot.mass * currentDot.mass;
+          ((dist - sphereRad) / Math.pow(dist, distanceExponent)) *
+          calcDot.mass *
+          currentDot.mass;
 
         if (calcDot.isMouse) {
           const sumOfRadius = currentDot.radius + calcDot.radius;
 
           if (dist > sumOfRadius + 2 * smallSphere) {
-            force = calcDot.mass / dist;
+            force = calcDot.mass / Math.pow(dist, distanceExponent);
           } else {
-            force = ((dist - sumOfRadius - smallSphere) / dist) * calcDot.mass;
+            force =
+              ((dist - sumOfRadius - smallSphere) /
+                Math.pow(dist, distanceExponent)) *
+              calcDot.mass;
           }
         }
 
@@ -201,6 +208,32 @@
 
     document.body.appendChild(canvas);
 
+    uiDiv.id = "physics-ui";
+    uiDiv.style = `
+      position: fixed;
+      top: 16px;
+      right: 16px;
+      background: rgba(0,0,0,0.7);
+      padding: 10px 14px;
+      border-radius: 6px;
+      color: #fff;
+      font-family: sans-serif;
+      z-index: 1000;
+    `;
+    uiDiv.innerHTML = `
+      <label for="distanceExponent">Distance exponent: <span id="exp-value">1</span></label>
+      <input type="range" id="distanceExponent" min="0.7" max="1.5" step="0.05" value="1" style="width:150px">
+    `;
+    document.body.appendChild(uiDiv);
+
+    const expSlider = document.getElementById("distanceExponent");
+    const expValue = document.getElementById("exp-value");
+
+    expSlider.addEventListener("input", (e) => {
+      distanceExponent = parseFloat(e.target.value);
+      expValue.textContent = distanceExponent.toFixed(2);
+    });
+
     draw();
 
     window.cleanup = () => {
@@ -218,6 +251,8 @@
       if (canvas.parentNode) {
         canvas.parentNode.removeChild(canvas);
       }
+
+      document.body.removeChild(uiDiv);
     };
   };
 

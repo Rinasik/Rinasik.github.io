@@ -73,7 +73,13 @@
         ctx.beginPath();
 
         ctx.strokeStyle = `rgb(${this.color})`;
-        ctx.arc(x, y, this.radius, 0, 2 * Math.PI);
+        ctx.arc(
+          x,
+          y,
+          Math.sin(((this.angle + Math.PI / 2) / 2) % Math.PI) * this.radius,
+          0,
+          2 * Math.PI
+        );
 
         ctx.stroke();
       }
