@@ -1,270 +1,250 @@
 (() => {
   let animationId = null;
-  const uiDiv = document.createElement("div");
-
-  class Metrica {
-    constructor({ height, width }) {
-      this._height = height;
-      this._width = width;
-    }
-    get width() {
-      return this._width;
-    }
-    get height() {
-      return this._height;
-    }
-
-    set width(newValue) {
-      this._width = newValue;
-    }
-
-    set height(newValue) {
-      this._height = newValue;
-    }
-  }
-
-  class XoY {
-    constructor({ x, y }) {
-      this._y = y;
-      this._x = x;
-    }
-    get x() {
-      return this._x;
-    }
-    get y() {
-      return this._y;
-    }
-
-    set x(newValue) {
-      this._x = newValue;
-    }
-
-    set y(newValue) {
-      this._y = newValue;
-    }
-  }
-
-  class MouseDot {
+  // =========================
+  // AudioManager
+  // =========================
+  class AudioManager {
     constructor() {
-      this.pos = new XoY({ x: 400, y: 400 });
-      this.radius = 50;
-      this.mass = 1;
-
-      this.isMouse = true;
+      this.ctx = new (window.AudioContext || window.webkitAudioContext)();
+      this.lastTime = 0;
     }
-    draw(ctx) {
-      let height = this.pos.y;
-      let width = this.pos.x;
 
-      if (width - this.radius < 0) {
-        width = this.radius;
-      } else if (width + this.radius > metrica.width) {
-        width = metrica.width - this.radius;
-      }
+    play(volume = 0.2) {
+      const now = this.ctx.currentTime;
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
 
-      if (height - this.radius < 0) {
-        height = this.radius;
-      } else if (height + this.radius > metrica.height) {
-        height = metrica.height - this.radius;
-      }
+      osc.type = "triangle";
+      osc.frequency.setValueAtTime(600 + Math.random() * 200, now);
 
-      ctx.beginPath();
-      ctx.fillStyle = "#f31260";
+      gain.gain.setValueAtTime(volume, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.15);
 
-      ctx.arc(width, height, this.radius, 0, 2 * Math.PI);
-      ctx.fill();
+      osc.connect(gain);
+      gain.connect(this.ctx.destination);
+
+      osc.start(now);
+      osc.stop(now + 0.15);
+
+      this.lastTime = performance.now();
+    }
+
+    canPlay(minInterval = 50) {
+      return performance.now() - this.lastTime > minInterval;
     }
   }
 
+  const audioManager = new AudioManager();
+
+  // =========================
+  // Dot
+  // =========================
   class Dot {
-    constructor({ x, y }) {
-      this.pos = new XoY({ y, x });
-      this.vel = new XoY({ x: 0, y: 0 });
-
-      this.radius = Math.random() * 10 + 20;
-      this.mass = Math.random() / 10;
-
-      const alpha = Math.random() + 0.1;
-
-      this.color = `rgba(243, 18, 96, ${alpha})`;
-
-      this.isMouse = false;
+    constructor(x, y, options = {}) {
+      this.pos = { x, y };
+      this.vel = { x: 0, y: 0 };
+      this.radius = options.radius || 20 + Math.random() * 10;
+      this.mass = options.mass || Math.random() / 10;
+      this.color =
+        options.color ||
+        `rgba(243,18,96,${options.isMouse ? 1 : 0.1 + Math.random()})`;
+      this.isMouse = options.isMouse || false;
     }
 
     draw(ctx) {
-      this.pos.x += this.vel.x;
-      this.pos.y += this.vel.y;
-
-      ctx.globalAplha = this.alpha;
+      if (!this.isMouse) {
+        this.pos.x += this.vel.x;
+        this.pos.y += this.vel.y;
+      }
 
       ctx.beginPath();
       ctx.fillStyle = this.color;
-
       ctx.arc(this.pos.x, this.pos.y, this.radius, 0, 2 * Math.PI);
       ctx.fill();
+    }
 
-      ctx.globalAplha = 1;
+    clamp(width, height) {
+      this.pos.x = Math.min(
+        Math.max(this.pos.x, this.radius),
+        width - this.radius
+      );
+      this.pos.y = Math.min(
+        Math.max(this.pos.y, this.radius),
+        height - this.radius
+      );
     }
   }
 
-  const canvas = document.createElement("canvas");
+  // =========================
+  // PhysicsEngine
+  // =========================
+  class PhysicsEngine {
+    constructor(dots, options) {
+      this.dots = dots;
+      this.sphereRad = options.sphereRad || 250;
+      this.smallSphere = options.smallSphere || 10;
+      this.smooth = options.smooth || 0.85;
+      this.distanceExp = options.distanceExp || 1;
+    }
 
-  const ctx = canvas.getContext("2d");
+    update() {
+      this.dots.forEach((dot, i) => {
+        if (dot.isMouse) return;
 
-  const hPadding = 10;
-  const wPadding = 20;
-  document.body.style.backgroundColor = "#383838";
-  document.body.style.padding = `${hPadding}px ${wPadding}px`;
+        let acc = { x: 0, y: 0 };
 
-  const sphereRad = 250;
-  const smallSphere = 10;
-  const smooth = 0.85;
-  let distanceExponent = 1;
+        this.dots.forEach((other, j) => {
+          if (i === j) return;
 
-  let metrica = new Metrica(document.body.getBoundingClientRect());
-  const mouseDot = new MouseDot();
+          let dx = other.pos.x - dot.pos.x;
+          let dy = other.pos.y - dot.pos.y;
+          let dist = Math.sqrt(dx * dx + dy * dy) || 1;
 
-  const dots = [mouseDot];
+          let force =
+            ((dist - this.sphereRad) / Math.pow(dist, this.distanceExp)) *
+            other.mass *
+            dot.mass;
 
-  const updateDots = (ctx) => {
-    dots.map((currentDot, currIndex) => {
-      if (currentDot.isMouse) {
-        return;
-      }
-      let acc = new XoY({ x: 0, y: 0 });
-
-      dots.map((calcDot, index) => {
-        if (currIndex === index) {
-          return;
-        }
-        const delta = new XoY({
-          x: calcDot.pos.x - currentDot.pos.x,
-          y: calcDot.pos.y - currentDot.pos.y,
-        });
-        const dist = Math.sqrt(delta.x * delta.x + delta.y * delta.y) || 1;
-
-        let force =
-          ((dist - sphereRad) / Math.pow(dist, distanceExponent)) *
-          calcDot.mass *
-          currentDot.mass;
-
-        if (calcDot.isMouse) {
-          const sumOfRadius = currentDot.radius + calcDot.radius;
-
-          if (dist > sumOfRadius + 2 * smallSphere) {
-            force = calcDot.mass / Math.pow(dist, distanceExponent);
-          } else {
+          if (other.isMouse) {
+            let sumR = dot.radius + other.radius;
             force =
-              ((dist - sumOfRadius - smallSphere) /
-                Math.pow(dist, distanceExponent)) *
-              calcDot.mass;
+              dist > sumR + 2 * this.smallSphere
+                ? other.mass / Math.pow(dist, this.distanceExp)
+                : ((dist - sumR - this.smallSphere) /
+                    Math.pow(dist, this.distanceExp)) *
+                  other.mass;
           }
+
+          acc.x += dx * force;
+          acc.y += dy * force;
+
+          // звуковой эффект
+          if (Math.abs(force) > 0.002 && audioManager.canPlay()) {
+            audioManager.play(Math.min(Math.abs(force) * 0.5, 0.3));
+          }
+        });
+
+        dot.vel.x = dot.vel.x * this.smooth + acc.x;
+        dot.vel.y = dot.vel.y * this.smooth + acc.y;
+      });
+    }
+  }
+
+  // =========================
+  // CanvasManager
+  // =========================
+  class CanvasManager {
+    constructor() {
+      this.canvas = document.createElement("canvas");
+      this.ctx = this.canvas.getContext("2d");
+      this.padding = { h: 10, w: 20 };
+      document.body.style.backgroundColor = "#383838";
+      document.body.style.padding = `${this.padding.h}px ${this.padding.w}px`;
+      document.body.appendChild(this.canvas);
+      this.resize();
+      window.addEventListener("resize", () => this.resize());
+    }
+
+    resize() {
+      this.width = window.innerWidth - 2 * this.padding.w;
+      this.height = window.innerHeight - 2 * this.padding.h - 2;
+      this.canvas.width = this.width;
+      this.canvas.height = this.height;
+    }
+
+    clear() {
+      this.ctx.clearRect(0, 0, this.width, this.height);
+    }
+  }
+
+  // =========================
+  // Game
+  // =========================
+  class Game {
+    constructor() {
+      this.dots = [];
+      this.mouseDot = new Dot(400, 400, { radius: 50, mass: 1, isMouse: true });
+      this.dots.push(this.mouseDot);
+
+      this.canvasMgr = new CanvasManager();
+      this.physics = new PhysicsEngine(this.dots, {
+        sphereRad: 250,
+        smallSphere: 10,
+        smooth: 0.85,
+        distanceExp: 1,
+      });
+
+      this.initUI();
+      this.bindEvents();
+      this.loop();
+
+      window.cleanup = () => {
+        if (animationId) {
+          cancelAnimationFrame(animationId);
+          animationId = null;
         }
+        document.body.removeChild(this.canvasMgr.canvas);
+        const uiDiv = document.getElementById("physics-ui");
+        if (uiDiv) document.body.removeChild(uiDiv);
+        this.dots.length = 0;
+        window.removeEventListener("mousemove", this.mouseMoveHandler);
+        window.removeEventListener("click", this.clickHandler);
+        window.removeEventListener("resize", this.canvasMgr.resize);
+      };
+    }
 
-        acc.x += delta.x * force;
-        acc.y += delta.y * force;
+    initUI() {
+      const uiDiv = document.createElement("div");
+      uiDiv.id = "physics-ui";
+      uiDiv.style = `
+        position: fixed; top:16px; right:16px;
+        background: rgba(0,0,0,0.7); padding: 10px 14px;
+        border-radius:6px; color:#fff; font-family:sans-serif; z-index:1000;
+      `;
+      uiDiv.innerHTML = `
+        <label for="distanceExponent">Distance exponent: <span id="exp-value">1</span></label>
+        <input type="range" id="distanceExponent" min="0.7" max="1.5" step="0.05" value="1" style="width:150px">
+      `;
+      document.body.appendChild(uiDiv);
+
+      const slider = document.getElementById("distanceExponent");
+      const label = document.getElementById("exp-value");
+
+      slider.addEventListener("input", (e) => {
+        this.physics.distanceExp = parseFloat(e.target.value);
+        label.textContent = this.physics.distanceExp.toFixed(2);
+      });
+    }
+
+    bindEvents() {
+      document.body.addEventListener("click", (e) => {
+        this.dots.push(
+          new Dot(
+            e.clientX - this.canvasMgr.padding.w,
+            e.clientY - this.canvasMgr.padding.h
+          )
+        );
       });
 
-      currentDot.vel.x = currentDot.vel.x * smooth + acc.x;
-      currentDot.vel.y = currentDot.vel.y * smooth + acc.y;
-    });
-
-    dots.map((dot) => dot.draw(ctx));
-  };
-
-  const init = () => {
-    const handleResize = () => {
-      const height = window.innerHeight;
-      const width = window.innerWidth;
-
-      metrica = new Metrica({
-        width: width - 2 * wPadding,
-        height: height - 2 * hPadding - 2,
+      document.body.addEventListener("mousemove", (e) => {
+        this.mouseDot.pos.x = e.clientX - this.canvasMgr.padding.w;
+        this.mouseDot.pos.y = e.clientY - this.canvasMgr.padding.h;
       });
-      document.body.style.height = `${height - 2 * hPadding - 2}px`;
-    };
+    }
 
-    const handleClick = (event) => {
-      dots.push(
-        new Dot({
-          y: event.clientY - hPadding,
-          x: event.clientX - wPadding,
-        })
+    loop() {
+      this.canvasMgr.clear();
+      this.dots.forEach((dot) =>
+        dot.clamp(this.canvasMgr.width, this.canvasMgr.height)
       );
-    };
+      this.physics.update();
+      this.dots.forEach((dot) => dot.draw(this.canvasMgr.ctx));
+      animationId = requestAnimationFrame(() => this.loop());
+    }
+  }
 
-    const handleMove = (event) => {
-      mouseDot.pos = new XoY({
-        y: event.clientY - hPadding,
-        x: event.clientX - wPadding,
-      });
-    };
-
-    window.addEventListener("resize", handleResize);
-    handleResize();
-
-    window.addEventListener("mousemove", handleMove);
-    window.document.body.addEventListener("click", handleClick);
-
-    document.body.appendChild(canvas);
-
-    uiDiv.id = "physics-ui";
-    uiDiv.style = `
-      position: fixed;
-      top: 16px;
-      right: 16px;
-      background: rgba(0,0,0,0.7);
-      padding: 10px 14px;
-      border-radius: 6px;
-      color: #fff;
-      font-family: sans-serif;
-      z-index: 1000;
-    `;
-    uiDiv.innerHTML = `
-      <label for="distanceExponent">Distance exponent: <span id="exp-value">1</span></label>
-      <input type="range" id="distanceExponent" min="0.7" max="1.5" step="0.05" value="1" style="width:150px">
-    `;
-    document.body.appendChild(uiDiv);
-
-    const expSlider = document.getElementById("distanceExponent");
-    const expValue = document.getElementById("exp-value");
-
-    expSlider.addEventListener("input", (e) => {
-      distanceExponent = parseFloat(e.target.value);
-      expValue.textContent = distanceExponent.toFixed(2);
-    });
-
-    draw();
-
-    window.cleanup = () => {
-      if (animationId !== null) {
-        cancelAnimationFrame(animationId);
-        animationId = null;
-      }
-
-      window.removeEventListener("resize", handleResize);
-      window.removeEventListener("mousemove", handleMove);
-      document.body.removeEventListener("click", handleClick);
-
-      dots.length = 0;
-
-      if (canvas.parentNode) {
-        canvas.parentNode.removeChild(canvas);
-      }
-
-      document.body.removeChild(uiDiv);
-    };
-  };
-
-  const draw = () => {
-    canvas.height = metrica.height;
-    canvas.width = metrica.width;
-
-    ctx.clearRect(0, 0, metrica.width, metrica.height);
-    updateDots(ctx);
-
-    animationId = requestAnimationFrame(draw);
-  };
-
-  init();
+  // =========================
+  // Start game
+  // =========================
+  new Game();
 })();
