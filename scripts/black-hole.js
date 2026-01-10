@@ -40,7 +40,8 @@
         2;
       this.angle = Math.random() * 2 * Math.PI;
 
-      this.velocity = 50 * Math.sqrt(1 / Math.pow(this.orbit, 3));
+      this.velocity = 0.0003 * Math.pow(maxOrbit - this.orbit, 0.7);
+
       this.alpha = 1;
       this.color = `243, 18, 96`;
     }
