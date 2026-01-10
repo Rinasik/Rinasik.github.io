@@ -1,261 +1,238 @@
 (() => {
-  // ===== Canvas setup =====
+  // ================= Canvas setup =================
   const canvas = document.createElement("canvas");
   const ctx = canvas.getContext("2d");
+  document.body.style.margin = "0";
+  document.body.style.overflow = "hidden";
+  canvas.style.touchAction = "none";
   document.body.appendChild(canvas);
 
-  let width = window.innerWidth;
-  let height = window.innerHeight;
-  canvas.width = width;
-  canvas.height = height;
+  let width = (canvas.width = window.innerWidth);
+  let height = (canvas.height = window.innerHeight);
 
-  // ===== Mandelbrot params =====
+  // ================= Mandelbrot params =================
   let scale = 3.5;
   let offsetX = -2.5;
   let offsetY = -1.0;
-  const BASE_ITER = 500;
 
+  const BASE_ITER = 300;
+  const MAX_ITER = 4000;
+  const LOW_RES_MAX_ITER = 9000;
+
+  // ================= State =================
   let isDragging = false;
   let dragStart = { x: 0, y: 0 };
   let zoomTimeout = null;
-  const WORKER_COUNT = navigator.hardwareConcurrency || 4;
 
-  let workers = [];
+  let renderToken = 0;
   let pendingWorkers = 0;
 
-  // ===== Low-res grid fixed =====
+  const WORKER_COUNT = navigator.hardwareConcurrency || 4;
+  const workers = [];
+
+  // ================= Low-res grid =================
   const NET_X = 64;
   const NET_Y = 64;
   let lowIter = 50;
 
-  // ===== Web Worker code =====
+  // ================= LUT =================
+  const LUT_SIZE = 2048;
+  const LUT = new Uint8ClampedArray(LUT_SIZE * 3);
+  for (let i = 0; i < LUT_SIZE; i++) {
+    const t = i / (LUT_SIZE - 1);
+    LUT[i * 3] = 80 + t * 175;
+    LUT[i * 3 + 1] = 30 + t * 100;
+    LUT[i * 3 + 2] = 120 + t * 135;
+  }
+
+  function getColorLUT(t) {
+    const idx = Math.min(Math.floor(t * (LUT_SIZE - 1)), LUT_SIZE - 1) * 3;
+    return [LUT[idx], LUT[idx + 1], LUT[idx + 2]];
+  }
+
+  function canZoomIn() {
+    return lowIter < LOW_RES_MAX_ITER;
+  }
+
+  // ================= Worker =================
   const workerCode = `
-    self.onmessage = function(e){
-      const {w,h,scale,offsetX,offsetY,maxIter,startY,endY} = e.data;
-      const image = new Uint8ClampedArray((endY-startY)*w*4);
+    self.onmessage = async function(e){
+      const { token, w, h, scale, offsetX, offsetY, maxIter, startY, endY, tileSize, LUT } = e.data;
 
-      function hslToRgb(h,s,l){
-        let r,g,b;
-        if(s===0){r=g=b=l;}
-        else{
-          const hue2rgb=(p,q,t)=>{
-            if(t<0)t+=1;if(t>1)t-=1;
-            if(t<1/6)return p+(q-p)*6*t;
-            if(t<1/2)return q;
-            if(t<2/3)return p+(q-p)*(2/3-t)*6;
-            return p;
-          };
-          const q=l<0.5?l*(1+s):l+s-l*s;
-          const p=2*l-q;
-          r=hue2rgb(p,q,h+1/3); g=hue2rgb(p,q,h); b=hue2rgb(p,q,h-1/3);
-        }
-        return [Math.round(r*255),Math.round(g*255),Math.round(b*255)];
-      }
+      const off = new OffscreenCanvas(w, endY - startY);
+      const ctx = off.getContext('2d');
+      const img = ctx.createImageData(w, endY - startY);
+      const lut = new Uint8ClampedArray(LUT);
 
-      for(let py=startY; py<endY; py++){
-        for(let px=0; px<w; px++){
-          const x0 = px/w*scale + offsetX;
-          const y0 = py/h*scale + offsetY;
-          let x=0,y=0,iter=0;
-          while(iter<maxIter && x*x + y*y < 16){
-            const xt = x*x - y*y + x0;
-            y = 2*x*y + y0;
-            x = xt;
-            iter++;
-          }
-          const idx = ((py-startY)*w + px)*4;
-          const tcol = iter/maxIter;
-          if(iter===maxIter){image[idx]=30;image[idx+1]=30;image[idx+2]=30;image[idx+3]=255;}
-          else{
-            const hue = 280 + tcol*120;
-            const lightness = 40 + tcol*30;
-            const sat = 80;
-            const c = hslToRgb(hue/360,sat/100,lightness/100);
-            image[idx] = c[0];image[idx+1] = c[1];image[idx+2] = c[2];image[idx+3] = 255;
+      for(let ty=0; ty<endY-startY; ty+=tileSize){
+        for(let tx=0; tx<w; tx+=tileSize){
+          const tH = Math.min(tileSize, endY - startY - ty);
+          const tW = Math.min(tileSize, w - tx);
+
+          for(let py=0; py<tH; py++){
+            for(let px=0; px<tW; px++){
+              const x0 = (tx + px)/w * scale + offsetX;
+              const y0 = (startY + ty + py)/h * scale + offsetY;
+              let x = 0, y = 0, iter = 0;
+              while(iter < maxIter && x*x + y*y < 4){
+                const xt = x*x - y*y + x0;
+                y = 2*x*y + y0;
+                x = xt;
+                iter++;
+              }
+              const idx = ((ty + py) * w + (tx + px)) * 4;
+              if(iter === maxIter){
+                img.data[idx] = img.data[idx+1] = img.data[idx+2] = 30;
+              }else{
+                const t = iter/maxIter;
+                const lutIdx = Math.floor(t * (lut.length/3 - 1)) * 3;
+                img.data[idx] = lut[lutIdx];
+                img.data[idx+1] = lut[lutIdx+1];
+                img.data[idx+2] = lut[lutIdx+2];
+              }
+              img.data[idx+3] = 255;
+            }
           }
         }
       }
-      postMessage({startY,endY,image}, [image.buffer]);
-    }
+
+      const bitmap = await createImageBitmap(img);
+      postMessage({ token, startY, bitmap }, [bitmap]);
+    };
   `;
-  const blob = new Blob([workerCode], { type: "application/javascript" });
-  const workerURL = URL.createObjectURL(blob);
+  const workerURL = URL.createObjectURL(new Blob([workerCode], { type: "application/javascript" }));
   for (let i = 0; i < WORKER_COUNT; i++) workers.push(new Worker(workerURL));
 
-  // ===== Adaptive low-res render (64x64) =====
-  function renderLowResGrid() {
+  // ================= Low-res =================
+  function renderLowRes() {
     ctx.fillStyle = "#222";
     ctx.fillRect(0, 0, width, height);
 
-    lowIter = 50 + Math.floor(100 * Math.pow(Math.log10(3.5 / scale), 2));
+    lowIter = Math.min(
+      Math.floor(50 + 200 * Math.pow(Math.log10(3.5 / scale), 2)),
+      LOW_RES_MAX_ITER
+    );
 
     for (let i = 0; i < NET_X; i++) {
       for (let j = 0; j < NET_Y; j++) {
-        const px = (i / NET_X) * width;
-        const py = (j / NET_Y) * height;
-
         const x0 = (i / NET_X) * scale + offsetX;
         const y0 = (j / NET_Y) * scale + offsetY;
-        let x = 0,
-          y = 0,
-          iter = 0;
-        while (iter < lowIter && x * x + y * y < 16) {
+
+        let x = 0, y = 0, iter = 0;
+        while (iter < lowIter && x * x + y * y < 4) {
           const xt = x * x - y * y + x0;
           y = 2 * x * y + y0;
           x = xt;
           iter++;
         }
-        const tcol = iter / lowIter;
-        let r, g, b;
-        if (iter === lowIter) {
-          r = g = b = 30;
-        } else {
-          const hue = 280 + tcol * 120;
-          const lightness = 40 + tcol * 30;
-          const sat = 80;
-          [r, g, b] = hslToRgb(hue / 360, sat / 100, lightness / 100);
-        }
+
+        const t = iter / lowIter;
+        const [r, g, b] = iter === lowIter ? [34, 34, 34] : getColorLUT(t);
         ctx.fillStyle = `rgb(${r},${g},${b})`;
-        ctx.fillRect(px, py, width / NET_X + 1, height / NET_Y + 1);
+        ctx.fillRect(
+          (i / NET_X) * width,
+          (j / NET_Y) * height,
+          width / NET_X + 1,
+          height / NET_Y + 1
+        );
       }
     }
   }
 
-  // ===== High-res progressive render (после окончания движения) =====
-  function renderHighRes() {
-    const offW = width;
-    const offH = height;
-    let workerResults = new Array(WORKER_COUNT);
+  // ================= Progressive High-res =================
+  function progressiveHighRes() {
+    const myToken = ++renderToken;
+    const targetIter = Math.min(BASE_ITER + Math.floor(Math.log10(3.5 / scale) * 1000), MAX_ITER);
+
+    const tileSize = 64;
+    const imgHeight = height;
+
     pendingWorkers = WORKER_COUNT;
+    const imgBitmaps = new Array(WORKER_COUNT);
+    const rows = Math.ceil(height / WORKER_COUNT);
 
-    const iter = Math.min(
-      BASE_ITER + Math.floor(Math.log10(3.5 / scale) * 1000),
-      4000
-    );
-
-    console.log(iter);
-
-    const rowsPerWorker = Math.ceil(offH / WORKER_COUNT);
     workers.forEach((w, i) => {
-      const startY = i * rowsPerWorker;
-      const endY = Math.min(startY + rowsPerWorker, offH);
-      w.onmessage = function (e) {
-        const { startY, endY, image } = e.data;
-        workerResults[i] = { startY, endY, image };
-        pendingWorkers--;
-        if (pendingWorkers === 0) drawWorkerResults(workerResults, offW, offH);
+      const startY = i * rows;
+      const endY = Math.min(startY + rows, height);
+
+      w.onmessage = (e) => {
+        if (e.data.token !== myToken) return;
+        imgBitmaps[i] = e.data.bitmap;
+        if (--pendingWorkers === 0) {
+          imgBitmaps.forEach((b, idx) => ctx.drawImage(b, 0, idx * rows));
+        }
       };
+
       w.postMessage({
-        w: offW,
-        h: offH,
+        token: myToken,
+        w: width,
+        h: height,
         scale,
         offsetX,
         offsetY,
-        maxIter: iter,
+        maxIter: targetIter,
         startY,
         endY,
+        tileSize,
+        LUT,
       });
     });
   }
 
-  function drawWorkerResults(workerResults, offW, offH) {
-    const imgData = ctx.createImageData(offW, offH);
-    workerResults.forEach((res) => {
-      const { startY, endY, image } = res;
-      imgData.data.set(image, startY * offW * 4);
-    });
-    ctx.putImageData(imgData, 0, 0);
+  function scheduleHighRes() {
+    clearTimeout(zoomTimeout);
+    zoomTimeout = setTimeout(progressiveHighRes, 200);
   }
 
-  function hslToRgb(h, s, l) {
-    let r, g, b;
-    if (s === 0) {
-      r = g = b = l;
-    } else {
-      const hue2rgb = (p, q, t) => {
-        if (t < 0) t += 1;
-        if (t > 1) t -= 1;
-        if (t < 1 / 6) return p + (q - p) * 6 * t;
-        if (t < 1 / 2) return q;
-        if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
-        return p;
-      };
-      const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
-      const p = 2 * l - q;
-      r = hue2rgb(p, q, h + 1 / 3);
-      g = hue2rgb(p, q, h);
-      b = hue2rgb(p, q, h - 1 / 3);
-    }
-    return [Math.round(r * 255), Math.round(g * 255), Math.round(b * 255)];
-  }
-
-  // ===== Mouse pan =====
-  canvas.addEventListener("mousedown", (e) => {
-    isDragging = true;
+  // ================= Input =================
+  const onMouseDown = (e) => { isDragging = true; dragStart.x = e.clientX; dragStart.y = e.clientY; };
+  const onMouseMove = (e) => {
+    if (!isDragging) return;
+    offsetX -= ((e.clientX - dragStart.x) / width) * scale;
+    offsetY -= ((e.clientY - dragStart.y) / height) * scale;
     dragStart.x = e.clientX;
     dragStart.y = e.clientY;
-  });
-  window.addEventListener("mouseup", () => {
-    isDragging = false;
-  });
-  window.addEventListener("mousemove", (e) => {
-    if (isDragging) {
-      const dx = e.clientX - dragStart.x;
-      const dy = e.clientY - dragStart.y;
-      offsetX -= (dx / width) * scale;
-      offsetY -= (dy / height) * scale;
-      dragStart.x = e.clientX;
-      dragStart.y = e.clientY;
-      renderLowResGrid();
-      scheduleHighRes();
-    }
-  });
+    renderLowRes();
+    scheduleHighRes();
+  };
+  const onMouseUp = () => (isDragging = false);
 
-  // ===== Zoom =====
-  canvas.addEventListener("wheel", (e) => {
+  const onWheel = (e) => {
     e.preventDefault();
-    const zoomFactor = 1.1;
-    const mouseX = e.clientX / width;
-    const mouseY = e.clientY / height;
+    if (e.deltaY < 0 && !canZoomIn()) return;
     const oldScale = scale;
-    if (e.deltaY < 0) scale /= zoomFactor;
-    else scale *= zoomFactor;
-    offsetX += (oldScale - scale) * mouseX;
-    offsetY += (oldScale - scale) * mouseY;
-    renderLowResGrid();
+    scale *= e.deltaY < 0 ? 0.9 : 1.1;
+    offsetX += (oldScale - scale) * (e.clientX / width);
+    offsetY += (oldScale - scale) * (e.clientY / height);
+    renderLowRes();
     scheduleHighRes();
-  });
-
-  // ===== Schedule high-res after movement =====
-  function scheduleHighRes() {
-    if (zoomTimeout) clearTimeout(zoomTimeout);
-    zoomTimeout = setTimeout(() => {
-      renderHighRes();
-    }, 200);
-  }
-
-  // ===== Resize =====
-  function onResize() {
-    width = canvas.width = window.innerWidth;
-    height = canvas.height = window.innerHeight;
-    renderLowResGrid();
-    scheduleHighRes();
-  }
-  window.addEventListener("resize", onResize);
-
-  // ===== Cleanup =====
-  window.cleanup = () => {
-    if (zoomTimeout) clearTimeout(zoomTimeout);
-    workers.forEach((w) => w.terminate());
-    workers = [];
-    canvas.remove();
-    window.removeEventListener("resize", onResize);
-    window.removeEventListener("mousemove", () => {});
-    window.removeEventListener("mouseup", () => {});
-    canvas.removeEventListener("mousedown", () => {});
-    canvas.removeEventListener("wheel", () => {});
   };
 
-  // ===== Initial render =====
-  renderLowResGrid();
+  const onResize = () => {
+    width = canvas.width = window.innerWidth;
+    height = canvas.height = window.innerHeight;
+    renderLowRes();
+    scheduleHighRes();
+  };
+
+  canvas.addEventListener("mousedown", onMouseDown);
+  window.addEventListener("mousemove", onMouseMove);
+  window.addEventListener("mouseup", onMouseUp);
+  canvas.addEventListener("wheel", onWheel, { passive: false });
+  window.addEventListener("resize", onResize);
+
+  // ================= Cleanup =================
+  window.cleanup = () => {
+    clearTimeout(zoomTimeout);
+    workers.forEach((w) => w.terminate());
+    canvas.remove();
+    canvas.removeEventListener("mousedown", onMouseDown);
+    window.removeEventListener("mousemove", onMouseMove);
+    window.removeEventListener("mouseup", onMouseUp);
+    canvas.removeEventListener("wheel", onWheel);
+    window.removeEventListener("resize", onResize);
+  };
+
+  // ================= Start =================
+  renderLowRes();
 })();
