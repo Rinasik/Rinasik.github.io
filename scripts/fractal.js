@@ -208,6 +208,57 @@
     scheduleHighRes();
   };
 
+  // ================= Touch support =================
+  let touchStartDist = 0;
+  let touchStartScale = 0;
+  let isTouchZoom = false;
+
+  const onTouchStart = (e) => {
+    if (e.touches.length === 1) {
+      isDragging = true;
+      dragStart.x = e.touches[0].clientX;
+      dragStart.y = e.touches[0].clientY;
+    } else if (e.touches.length === 2) {
+      isTouchZoom = true;
+      isDragging = false;
+      const dx = e.touches[0].clientX - e.touches[1].clientX;
+      const dy = e.touches[0].clientY - e.touches[1].clientY;
+      touchStartDist = Math.hypot(dx, dy);
+      touchStartScale = scale;
+    }
+  };
+
+  const onTouchMove = (e) => {
+    e.preventDefault();
+    if (isDragging && e.touches.length === 1) {
+      const touch = e.touches[0];
+      offsetX -= ((touch.clientX - dragStart.x) / width) * scale;
+      offsetY -= ((touch.clientY - dragStart.y) / height) * scale;
+      dragStart.x = touch.clientX;
+      dragStart.y = touch.clientY;
+      renderLowRes();
+      scheduleHighRes();
+    } else if (isTouchZoom && e.touches.length === 2) {
+      const dx = e.touches[0].clientX - e.touches[1].clientX;
+      const dy = e.touches[0].clientY - e.touches[1].clientY;
+      const dist = Math.hypot(dx, dy);
+      const zoomFactor = touchStartDist / dist;
+      const oldScale = scale;
+      scale = touchStartScale * zoomFactor;
+      offsetX += (oldScale - scale) * 0.5;
+      offsetY += (oldScale - scale) * 0.5;
+      renderLowRes();
+      scheduleHighRes();
+    }
+  };
+
+  const onTouchEnd = (e) => {
+    if (e.touches.length === 0) {
+      isDragging = false;
+      isTouchZoom = false;
+    }
+  };
+
   const onResize = () => {
     width = canvas.width = window.innerWidth;
     height = canvas.height = window.innerHeight;
@@ -215,10 +266,16 @@
     scheduleHighRes();
   };
 
+  // ================= Attach events =================
   canvas.addEventListener("mousedown", onMouseDown);
   window.addEventListener("mousemove", onMouseMove);
   window.addEventListener("mouseup", onMouseUp);
   canvas.addEventListener("wheel", onWheel, { passive: false });
+
+  canvas.addEventListener("touchstart", onTouchStart, { passive: false });
+  canvas.addEventListener("touchmove", onTouchMove, { passive: false });
+  canvas.addEventListener("touchend", onTouchEnd);
+
   window.addEventListener("resize", onResize);
 
   // ================= Cleanup =================
@@ -226,13 +283,20 @@
     clearTimeout(zoomTimeout);
     workers.forEach((w) => w.terminate());
     canvas.remove();
+
     canvas.removeEventListener("mousedown", onMouseDown);
     window.removeEventListener("mousemove", onMouseMove);
     window.removeEventListener("mouseup", onMouseUp);
     canvas.removeEventListener("wheel", onWheel);
+
+    canvas.removeEventListener("touchstart", onTouchStart);
+    canvas.removeEventListener("touchmove", onTouchMove);
+    canvas.removeEventListener("touchend", onTouchEnd);
+
     window.removeEventListener("resize", onResize);
   };
 
   // ================= Start =================
   renderLowRes();
+  scheduleHighRes();
 })();
